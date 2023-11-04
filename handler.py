@@ -34,7 +34,7 @@ async def check_card_status(card_number: str, pin: str) -> dict:
 
 async def list_card(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
     text = await update.callback_query.message.reply_text("Checking card status...")
-    user_id = update.effective_chat.id
+    user_id = str(update.effective_chat.id)
     stmt = select(Card).where(Card.user_id == user_id)
     with Session(engine) as session:
         cards = session.exec(stmt)
@@ -60,7 +60,7 @@ async def card_number_received(update: Update, context) -> int:
 
 
 async def card_pin_received(update: Update, context) -> int:
-    user_id = update.effective_chat.id
+    user_id = str(update.effective_chat.id)
     user_data = context.user_data
     user_data['pin'] = update.message.text
     card_number = user_data['card_number']
@@ -84,7 +84,7 @@ async def card_pin_received(update: Update, context) -> int:
 
 
 async def remove_card_start(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_chat.id
+    user_id = str(update.effective_chat.id)
     stmt = select(Card).where(Card.user_id == user_id)
     with Session(engine) as session:
         cards = session.exec(stmt)
@@ -100,7 +100,7 @@ async def remove_card_start(update: Update, _context: ContextTypes.DEFAULT_TYPE)
 async def card_selected(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> int:
     selected_card = update.callback_query.data
     if selected_card and len(selected_card) == 7:
-        user_id = update.callback_query.from_user.id
+        user_id = str(update.callback_query.from_user.id)
         stmt = select(Card).where(Card.user_id == user_id).where(Card.serial_number == selected_card)
         with Session(engine) as session:
             card = session.exec(stmt).first()

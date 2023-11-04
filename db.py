@@ -7,7 +7,7 @@ from config import get_settings
 
 class Card(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int
+    user_id: str
     serial_number: str
     card_number: str
     pin: str
