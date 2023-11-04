@@ -1,3 +1,6 @@
 python-telegram-bot[job-queue]
 requests
 aiohttp
+sqlmodel
+psycopg2
+pydantic[dotenv]

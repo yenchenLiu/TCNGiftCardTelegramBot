@@ -3,9 +3,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Callb
 from telegram.ext.filters import MessageFilter
 import handler
 import conversation
-
-# Your bot's token
-TOKEN = ''
+from config import get_settings
 
 
 class AnonymousQueryFilter(MessageFilter):
@@ -21,9 +19,8 @@ class AnonymousQueryFilter(MessageFilter):
 
 async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query.data
-    match query:
-        case 'list':
-            await handler.list_card(update, context)
+    if query == 'list':
+        await handler.list_card(update, context)
 
 
 async def anonymous_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -32,7 +29,7 @@ async def anonymous_query(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token(TOKEN).build()
+    application = ApplicationBuilder().token(get_settings().telegram_token).build()
 
     # Add command handlers
     application.add_handler(CommandHandler('start', handler.start))

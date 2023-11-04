@@ -1,34 +1,20 @@
 from telegram.ext import ContextTypes
 import aiohttp
-import sqlite3
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
 from telegram.ext import ConversationHandler
+from sqlmodel import Session, select
 
 import keyboard
+from db import Card, engine
 
-# Database setup
-conn = sqlite3.connect('card_info.db', check_same_thread=False)
-cursor = conn.cursor()
-
-# Create table to store card info
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS cards (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    serial_number TEXT, 
-    card_number TEXT, 
-    pin TEXT
-)
-''')
-conn.commit()
 # Define states for the add card conversation
 CARD_NUMBER, CARD_PIN = 0, 1
 # Define a state for the remove card conversation
 REMOVE_CARD = 0
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("""TCN Gift card query program\n
 Enter the card number + pin code to query, and the system will not record your cards.\n
 For example 502125102XXXXXXXXXX 1234\n
@@ -46,37 +32,22 @@ async def check_card_status(card_number: str, pin: str) -> dict:
                 raise ValueError(f'API request failed with status code {response.status}')
 
 
-# Command handler to remove a card
-async def remove_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_chat.id
-    args = context.args
-    if len(args) == 1:
-        card_number = args[0]
-        cursor.execute('DELETE FROM cards WHERE user_id = ? AND card_number = ?',
-                       (user_id, card_number))
-        conn.commit()
-        await update.message.reply_text("Card removed successfully.")
-    else:
-        await update.message.reply_text("Please provide the card number.")
-
-
-async def list_card(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def list_card(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
     text = await update.callback_query.message.reply_text("Checking card status...")
     user_id = update.effective_chat.id
-    cursor.execute('SELECT user_id, card_number, pin FROM cards WHERE user_id = ?', (user_id,))
-    cards = cursor.fetchall()
-
-    for user_id, card_number, pin in cards:
-        try:
-            card_data = await check_card_status(card_number, pin)
-
-            await update.callback_query.message.reply_text(summarise_card_data(card_data))
-        except Exception as e:
-            await update.callback_query.message.reply_text(f"Failed to check card status: {e}")
+    stmt = select(Card).where(Card.user_id == user_id)
+    with Session(engine) as session:
+        cards = session.exec(stmt)
+        for card in cards:
+            try:
+                card_data = await check_card_status(card.card_number, card.pin)
+                await update.callback_query.message.reply_text(summarise_card_data(card_data))
+            except Exception as e:
+                await update.callback_query.message.reply_text(f"Failed to check card status: {e}")
     await text.edit_text("Finished checking card status.")
 
 
-async def add_card_start(update: Update, context) -> int:
+async def add_card_start(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.message.reply_text('Please enter the card number:')
     return CARD_NUMBER
 
@@ -99,9 +70,10 @@ async def card_pin_received(update: Update, context) -> int:
         if len(card_number) != 19 or len(pin) != 4:
             raise ValueError("card_number or pin is wrong")
         card_data = await check_card_status(card_number, pin)
-        cursor.execute('INSERT INTO cards (user_id, serial_number, card_number, pin) VALUES (?, ?, ?, ?)',
-                       (user_id, card_data['data']['source_serial'], card_number, pin))
-        conn.commit()
+        card = Card(user_id=user_id, serial_number=card_data['data']['source_serial'], card_number=card_number, pin=pin)
+        with Session(engine) as session:
+            session.add(card)
+            session.commit()
         await update.message.reply_text("Card added successfully.")
         await update.message.reply_text(summarise_card_data(card_data))
     except ValueError as e:
@@ -111,25 +83,32 @@ async def card_pin_received(update: Update, context) -> int:
     return ConversationHandler.END
 
 
-async def remove_card_start(update: Update, context) -> int:
-    user_id = update.callback_query.from_user.id
-    cursor.execute('SELECT serial_number FROM cards WHERE user_id = ?', (user_id,))
-    cards = cursor.fetchall()
-    select_keyboard = [[InlineKeyboardButton(card[0], callback_data=card[0])] for card in cards]
-    if len(select_keyboard) == 0:
-        await update.callback_query.message.reply_text('No cards to remove!')
-        return ConversationHandler.END
-    reply_markup = InlineKeyboardMarkup(select_keyboard)
-    await update.callback_query.message.reply_text('Select a card to remove:', reply_markup=reply_markup)
-    return REMOVE_CARD
+async def remove_card_start(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_chat.id
+    stmt = select(Card).where(Card.user_id == user_id)
+    with Session(engine) as session:
+        cards = session.exec(stmt)
+        select_keyboard = [[InlineKeyboardButton(card.serial_number, callback_data=card.serial_number)] for card in cards]
+        if len(select_keyboard) == 0:
+            await update.callback_query.message.reply_text('No cards to remove!')
+            return ConversationHandler.END
+        reply_markup = InlineKeyboardMarkup(select_keyboard)
+        await update.callback_query.message.reply_text('Select a card to remove:', reply_markup=reply_markup)
+        return REMOVE_CARD
 
 
-async def card_selected(update: Update, context) -> int:
+async def card_selected(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> int:
     selected_card = update.callback_query.data
-    if selected_card and len(selected_card) == 19:
+    if selected_card and len(selected_card) == 7:
         user_id = update.callback_query.from_user.id
-        cursor.execute('DELETE FROM cards WHERE user_id = ? AND serial_number = ?', (user_id, selected_card))
-        conn.commit()
+        stmt = select(Card).where(Card.user_id == user_id).where(Card.serial_number == selected_card)
+        with Session(engine) as session:
+            card = session.exec(stmt).first()
+            if not card:
+                await update.callback_query.message.reply_text('Invalid card selected!')
+                return ConversationHandler.END
+            session.delete(card)
+            session.commit()
         await update.callback_query.message.reply_text('Card removed successfully!')
     else:
         await update.callback_query.message.reply_text('Invalid card selected!')
